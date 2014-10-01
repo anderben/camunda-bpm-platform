@@ -61,6 +61,7 @@ import org.camunda.bpm.engine.impl.cmmn.model.CmmnOnPartDeclaration;
 import org.camunda.bpm.engine.impl.cmmn.model.CmmnSentryDeclaration;
 import org.camunda.bpm.engine.impl.core.instance.CoreExecution;
 import org.camunda.bpm.engine.impl.core.variable.CorePersistentVariableScope;
+import org.camunda.bpm.engine.impl.pvm.PvmException;
 import org.camunda.bpm.engine.impl.pvm.PvmProcessDefinition;
 import org.camunda.bpm.engine.impl.pvm.runtime.PvmExecutionImpl;
 
@@ -249,33 +250,50 @@ public abstract class CmmnExecution extends CoreExecution implements CmmnCaseIns
     }
 
     // collect satisfied sentries
-    List<String> satisfiedSentries = new ArrayList<String>();
+    List<String> satisfiedSentries = getSatisfiedSentries(affectedSentries);
+    triggerSentryCriteria(satisfiedSentries);
+  }
 
-    for (String affectedSentryId : affectedSentries) {
+  protected List<String> getSatisfiedSentries(List<String> sentryIds) {
+    List<String> result = new ArrayList<String>();
 
-      if (isSentrySatisfied(affectedSentryId)) {
-        satisfiedSentries.add(affectedSentryId);
+    if (sentryIds != null) {
+
+      for (String sentryId : sentryIds) {
+
+        if (isSentrySatisfied(sentryId)) {
+          result.add(sentryId);
+        }
+
       }
 
     }
 
+    return result;
+  }
+
+  protected void triggerSentryCriteria(List<String> satisfiedSentries) {
     if (!satisfiedSentries.isEmpty()) {
       // if there are satisfied sentries, trigger the associated
       // case executions
+
+      // 1. propagate to child case executions ///////////////////////////////////////////
 
       // returns a copy of the list of child case executions!
       List<? extends CmmnExecution> children = getCaseExecutions();
 
       for (CmmnExecution currentChild : children) {
+        String id = currentChild.getId();
         CmmnActivity currentChildActivity = currentChild.getActivity();
+        ensureNotNull(PvmException.class, "Case execution '"+id+"': has no current activity.", "activity", currentChildActivity);
 
         // trigger first exitCriteria
         List<CmmnSentryDeclaration> exitCriteria = currentChildActivity.getExitCriteria();
         for (CmmnSentryDeclaration sentryDeclaration : exitCriteria) {
 
           if (satisfiedSentries.contains(sentryDeclaration.getId())) {
-            if (!currentChild.isNew()) {
-              currentChild.exit();
+            if (!currentChild.isNew() && !currentChild.isCompleted()) {
+              currentChild.triggerExitCriteria();
               break;
             }
           }
@@ -299,8 +317,20 @@ public abstract class CmmnExecution extends CoreExecution implements CmmnCaseIns
         }
       }
 
-    }
+      // 2. check exit criteria of the case instance //////////////////////////////////////////
 
+      if (isCaseInstanceExecution() && isActive()) {
+        CmmnActivity activity = getActivity();
+        List<CmmnSentryDeclaration> exitCriteria = activity.getExitCriteria();
+        for (CmmnSentryDeclaration sentryDeclaration : exitCriteria) {
+          if (satisfiedSentries.contains(sentryDeclaration.getId())) {
+            terminate();
+            break;
+          }
+        }
+      }
+
+    }
   }
 
   public void triggerExitCriteria() {
@@ -333,12 +363,13 @@ public abstract class CmmnExecution extends CoreExecution implements CmmnCaseIns
 
       } else { /* IF_PART.equals(sentryPart.getType) == true */
 
+        ifPart = sentryPart;
+
         // once the ifPart has been satisfied the whole sentry is satisfied
         if (ifPart.isSatisfied()) {
           return true;
         }
 
-        ifPart = sentryPart;
       }
 
     }

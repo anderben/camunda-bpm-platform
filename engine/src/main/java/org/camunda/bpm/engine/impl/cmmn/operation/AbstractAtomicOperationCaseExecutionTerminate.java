@@ -33,18 +33,10 @@ public abstract class AbstractAtomicOperationCaseExecutionTerminate extends Abst
     return execution;
   }
 
-  protected void transitionNotificationCompleted(CmmnExecution execution) {
+  protected void postTransitionNotification(CmmnExecution execution) {
     if (!execution.isCaseInstanceExecution()) {
       execution.remove();
     }
-
-    // TODO: We need to know what kind of termination happens!
-    // if a case execution will be terminated because the exitCriterias
-    // are fulfilled, then it will be "exit" executed on the case execution.
-    // in that case the case execution have to notify the parent too.
-    // but if the transition "exit" will be executed, because the
-    // parent has been terminated, we do not care about the notification
-    // of the parent.
 
     CmmnExecution parent = execution.getParent();
     if (parent != null) {

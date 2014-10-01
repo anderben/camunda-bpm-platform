@@ -16,6 +16,7 @@ import static org.camunda.bpm.engine.impl.cmmn.execution.CaseExecutionState.AVAI
 import static org.camunda.bpm.engine.impl.cmmn.execution.CaseExecutionState.NEW;
 import static org.camunda.bpm.engine.impl.cmmn.handler.ItemHandler.PROPERTY_REPETITION_RULE;
 import static org.camunda.bpm.engine.impl.cmmn.handler.ItemHandler.PROPERTY_REQUIRED_RULE;
+import static org.camunda.bpm.engine.impl.util.EnsureUtil.ensureNotNull;
 
 import java.util.List;
 
@@ -26,6 +27,7 @@ import org.camunda.bpm.engine.impl.cmmn.execution.CmmnActivityExecution;
 import org.camunda.bpm.engine.impl.cmmn.model.CmmnActivity;
 import org.camunda.bpm.engine.impl.cmmn.model.CmmnSentryDeclaration;
 import org.camunda.bpm.engine.impl.pvm.PvmException;
+import org.camunda.bpm.engine.impl.util.EnsureUtil;
 
 
 /**
@@ -38,89 +40,63 @@ public abstract class PlanItemDefinitionActivityBehavior implements CmmnActivity
     // nothing to do!
   }
 
-  protected boolean isEntryCriteriaSatisfied(CmmnActivityExecution execution) {
+  protected boolean isAtLeastOneEntryCriteriaSatisfied(CmmnActivityExecution execution) {
+    CmmnActivity activity = getActivity(execution);
+
+    List<CmmnSentryDeclaration> entryCriteria = activity.getEntryCriteria();
+
+    if (entryCriteria != null && !entryCriteria.isEmpty()) {
+      return isSentrySatisified(entryCriteria, execution);
+
+    } else {
+      // missing entry criteria (Sentry) is considered true.
+      return true;
+    }
+  }
+
+  protected boolean isAtLeastOneExitCriteriaSatisfied(CmmnActivityExecution execution) {
+    CmmnActivity activity = getActivity(execution);
+
+    List<CmmnSentryDeclaration> exitCriteria = activity.getExitCriteria();
+
+    if (exitCriteria != null && !exitCriteria.isEmpty()) {
+      return isSentrySatisified(exitCriteria, execution);
+
+    } else {
+      return false;
+    }
+  }
+
+  protected CmmnActivity getActivity(CmmnActivityExecution execution) {
     String id = execution.getId();
     CmmnActivity activity = execution.getActivity();
+    ensureNotNull(PvmException.class, "Case execution '"+id+"': has no current activity.", "activity", activity);
 
-    if (activity != null) {
+    return activity;
+  }
 
-      List<CmmnSentryDeclaration> entryCriteria = activity.getEntryCriteria();
+  protected boolean isSentrySatisified(List<CmmnSentryDeclaration> sentryDeclarations, CmmnActivityExecution execution) {
+    String id = execution.getId();
+    CmmnActivityExecution parent = execution.getParent();
+    EnsureUtil.ensureNotNull(PvmException.class, "Case execution '"+id+"': has no parent.", "parent", parent);
 
-      if (entryCriteria != null && !entryCriteria.isEmpty()) {
-        CmmnActivityExecution parent = execution.getParent();
+    for (CmmnSentryDeclaration sentryDeclaration : sentryDeclarations) {
 
-        if (parent != null) {
-          for (CmmnSentryDeclaration sentryDeclaration : entryCriteria) {
-
-            String sentryId = sentryDeclaration.getId();
-            if (parent.isSentrySatisfied(sentryId)) {
-              return true;
-            }
-
-          }
-
-          return false;
-
-        } else {
-          throw new PvmException("Case execution '"+id+"': has no parent.");
-        }
-      } else {
-        // missing entry criteria (Sentry) is considered true.
+      String sentryId = sentryDeclaration.getId();
+      if (parent.isSentrySatisfied(sentryId)) {
         return true;
       }
 
-    } else {
-      throw new PvmException("Case execution '"+id+"': has no current activity.");
-
     }
 
-  }
-
-  protected boolean isExitCriteriaSatisfied(CmmnActivityExecution execution) {
-    String id = execution.getId();
-    CmmnActivity activity = execution.getActivity();
-
-    if (activity != null) {
-
-      List<CmmnSentryDeclaration> exitCriteria = activity.getExitCriteria();
-
-      if (exitCriteria != null && !exitCriteria.isEmpty()) {
-        CmmnActivityExecution parent = execution.getParent();
-
-        if (parent != null) {
-          for (CmmnSentryDeclaration sentryDeclaration : exitCriteria) {
-
-            String sentryId = sentryDeclaration.getId();
-            if (parent.isSentrySatisfied(sentryId)) {
-              return true;
-            }
-
-          }
-
-          return false;
-
-        } else {
-          throw new PvmException("Case execution '"+id+"': has no parent.");
-        }
-      } else {
-        // missing entry criteria (Sentry) is considered true.
-        return false;
-      }
-
-    } else {
-      throw new PvmException("Case execution '"+id+"': has no current activity.");
-
-    }
-
+    return false;
   }
 
   public void created(CmmnActivityExecution execution) {
-    if (isExitCriteriaSatisfied(execution)) {
+    if (isAtLeastOneExitCriteriaSatisfied(execution)) {
       triggerExitCriteria(execution);
-      return;
-    }
 
-    if (isEntryCriteriaSatisfied(execution)) {
+    } else if (isAtLeastOneEntryCriteriaSatisfied(execution)) {
       triggerEntryCriteria(execution);
     }
   }
@@ -179,7 +155,9 @@ public abstract class PlanItemDefinitionActivityBehavior implements CmmnActivity
   }
 
   public void resumed(CmmnActivityExecution execution) {
-    // noop
+    if (execution.isAvailable()) {
+      created(execution);
+    }
   }
 
   public void reactivated(CmmnActivityExecution execution) {

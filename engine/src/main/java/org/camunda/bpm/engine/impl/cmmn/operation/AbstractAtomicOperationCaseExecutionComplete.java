@@ -49,7 +49,7 @@ public abstract class AbstractAtomicOperationCaseExecutionComplete extends Abstr
     return execution;
   }
 
-  protected void transitionNotificationCompleted(CmmnExecution execution) {
+  protected void postTransitionNotification(CmmnExecution execution) {
     if (!execution.isCaseInstanceExecution()) {
       execution.remove();
     } else {

@@ -16,7 +16,9 @@ import static org.camunda.bpm.engine.impl.cmmn.execution.CaseExecutionState.ACTI
 import static org.camunda.bpm.engine.impl.cmmn.execution.CaseExecutionState.COMPLETED;
 import static org.camunda.bpm.engine.impl.cmmn.execution.CaseExecutionState.FAILED;
 import static org.camunda.bpm.engine.impl.cmmn.execution.CaseExecutionState.SUSPENDED;
-import static org.camunda.bpm.engine.impl.util.EnsureUtil.ensureNotNull;
+import static org.camunda.bpm.engine.impl.cmmn.handler.ItemHandler.PROPERTY_AUTO_COMPLETE;
+import static org.camunda.bpm.engine.impl.util.ActivityBehaviorUtil.getActivityBehavior;
+import static org.camunda.bpm.engine.impl.util.EnsureUtil.ensureInstanceOf;
 
 import java.util.List;
 
@@ -160,26 +162,23 @@ public class StageActivityBehavior extends StageOrTaskActivityBehavior implement
         entity.forceUpdate();
       }
 
-      // TODO: evaluate autoComplete property
-      boolean autoComplete = false;
-      if (canComplete(execution, autoComplete, false)) {
-        execution.complete();
+      if (execution.isActive()) {
+        String id = execution.getId();
+
+        CmmnActivity activity = getActivity(execution);
+        Object property = activity.getProperty(PROPERTY_AUTO_COMPLETE);
+
+        boolean autoComplete = false;
+        if (property != null) {
+          ensureInstanceOf("Cannot evaluate autoComplete property for case execution '"+id+"': autoComplete property must evaluate to boolean.", "autoComplete", property, Boolean.class);
+          autoComplete = Boolean.valueOf((Boolean) property) ;
+        }
+
+        if (canComplete(execution, autoComplete, false)) {
+          execution.complete();
+        }
       }
     }
-  }
-
-  protected CmmnActivityBehavior getActivityBehavior(CmmnActivityExecution execution) {
-    String id = execution.getId();
-
-    CmmnActivity activity = execution.getActivity();
-
-    ensureNotNull("Case execution '" + id + "': has no current activity", "activity", activity);
-
-    CmmnActivityBehavior behavior = activity.getActivityBehavior();
-
-    ensureNotNull("There is no behavior specified in " + activity + " for case execution '" + id + "'", "behavior", behavior);
-
-    return behavior;
   }
 
   protected void terminating(CmmnActivityExecution execution) {
@@ -190,11 +189,15 @@ public class StageActivityBehavior extends StageOrTaskActivityBehavior implement
 
         CmmnActivityBehavior behavior = getActivityBehavior(child);
 
-        if (behavior instanceof StageOrTaskActivityBehavior) {
-          child.exit();
-        } else { /* behavior instanceof EventListenerOrMilestoneActivityBehavior */
-          child.parentTerminate();
+        if (!child.isTerminated() && !child.isCompleted()) {
+          if (behavior instanceof StageOrTaskActivityBehavior) {
+            child.exit();
+
+          } else { /* behavior instanceof EventListenerOrMilestoneActivityBehavior */
+            child.parentTerminate();
+          }
         }
+
       }
     }
   }
@@ -206,29 +209,41 @@ public class StageActivityBehavior extends StageOrTaskActivityBehavior implement
       for (CmmnExecution child : children) {
         CmmnActivityBehavior behavior = getActivityBehavior(child);
 
-        if (behavior instanceof StageOrTaskActivityBehavior) {
-          child.parentSuspend();
-        } else { /* behavior instanceof EventListenerOrMilestoneActivityBehavior */
-          child.suspend();
+        if (!child.isTerminated()) {
+          if (behavior instanceof StageOrTaskActivityBehavior) {
+            child.parentSuspend();
+
+          } else { /* behavior instanceof EventListenerOrMilestoneActivityBehavior */
+            child.suspend();
+          }
         }
       }
     }
   }
 
   public void resumed(CmmnActivityExecution execution) {
-    List<? extends CmmnExecution> children = execution.getCaseExecutions();
-    if (children != null && !children.isEmpty()) {
+    if (execution.isAvailable()) {
+      created(execution);
 
-      for (CmmnExecution child : children) {
-        CmmnActivityBehavior behavior = getActivityBehavior(child);
+    } else {
+      List<? extends CmmnExecution> children = execution.getCaseExecutions();
+      if (children != null && !children.isEmpty()) {
 
-        if (behavior instanceof StageOrTaskActivityBehavior) {
-          child.parentResume();
-        } else { /* behavior instanceof EventListenerOrMilestoneActivityBehavior */
-          child.resume();
+        for (CmmnExecution child : children) {
+          CmmnActivityBehavior behavior = getActivityBehavior(child);
+
+          if (!child.isTerminated()) {
+            if (behavior instanceof StageOrTaskActivityBehavior) {
+              child.parentResume();
+
+            } else { /* behavior instanceof EventListenerOrMilestoneActivityBehavior */
+              child.resume();
+            }
+          }
         }
       }
     }
+
   }
 
   public void reactivated(CmmnActivityExecution execution) {
